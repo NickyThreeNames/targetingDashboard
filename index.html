@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>dc.js example - Targeting Interactive</title>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" type="text/css" href="css/dc.css">
+    <link rel="stylesheet" type="text/css" href="css/leaflet.css">
+    <link rel="stylesheet" type="text/css" href="css/bootstrap.css">
+    <link rel="stylesheet" type="text/css" href="css/main.css">
+</head>
+<body>
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-xs-12 dc-data-count dc-chart" id="data-count">
+      <h2>Beer History
+        <small>
+          <span class="filter-count"></span> selected out of <span class="total-count"></span> districts |
+           <a id="all" href="#">Reset All</a>
+          </span>
+        </small>
+      </h2>
+    </div>
+  </div>
+  <div class="row" id="control-row">
+    <div class="col-xs-2 pie-chart">
+      <h4>Party <small><a id="year">reset</a></small></h4>
+      <div class="dc-chart" id="chart-ring-party"></div>
+    </div>
+    <div class="col-xs-2 pie-chart">
+      <h4>Incumbency <small><a id="month" href="#">reset</a></small></h4>
+      <div class="dc-chart" id="chart-ring-incumb"></div>
+    </div>
+    <div class="col-xs-2 pie-chart">
+      <h4>Open <small><a id="day">reset</a></small></h4>
+      <div id="chart-ring-open" class="dc-chart"></div>
+    </div>
+    <div class="col-xs-6">
+      <h4>Districts</h4>
+      <div id="map"></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-xs-6 col-md-3">
+      <div class="dc-chart" id="chart-dpi-count"></div>
+    </div>
+    <div class="col-xs-6 col-md-3">
+      <div class="dc-chart" id="chart-dem-base-count"></div>
+    </div>
+    <div class="col-xs-6 col-md-3">
+      <div class="dc-chart" id="chart-previous-election-count"></div>
+    </div>
+    <div class="col-xs-6 col-md-3">
+      <div class="dc-chart" id="chart-gap-count"></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-xs-12">
+      <table class="table table-bordered table-striped" id="data-table">
+        <thead>
+          <tr class="header">
+            <th>District</th>
+            <th>DPI</th>
+            <th>Dem Base</th>
+            <th>Name</th>
+            <th>Party</th>
+            <th>Incumbency</th>
+            <th>2014 Percentage</th>
+          </tr>
+        </thead>
+      </table>
+    </div>
+  </div>
+</div>
+<script type="text/javascript" src="js/d3.js"></script>
+<script type="text/javascript" src="js/crossfilter.js"></script>
+<script type="text/javascript" src="js/dc.js"></script>
+<script type="text/javascript" src="js/leaflet.js"></script>
+<script type="text/javascript" src="js/underscore-min.js"></script>
+<script type="text/javascript">
+
+/* instantiate and configure map */
+var map = L.map('map');
+var breweryMarkers = new L.FeatureGroup();
+
+L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}', {
+  id: '<your id here>',
+  accessToken: '<your token here>',
+  maxZoom: 16
+} ).addTo(map);
+
+
+/* Parse JSON file, create charts, draw markers on map */
+d3.csv('/data/election.csv', function (data) {
+  #var electionData = data.response.beers.items;
+
+  #var fullDateFormat = d3.time.format('%a, %d %b %Y %X %Z');
+  #var yearFormat = d3.time.format('%Y');
+  #var monthFormat = d3.time.format('%b');
+  #var dayOfWeekFormat = d3.time.format('%a');
+
+  // normalize/parse data so dc can correctly sort & bin them
+  // I like to think of each "d" as a row in a spreadsheet
+  _.each(data, function(d) {
+    d.count = +d.count;
+    // round to nearest 20
+    d.dpi = Math.round(+d.DPI * 20) / 20
+    d.dembase = Math.round(+d.DemBase *10) / 10;
+    // round to nearest 0.5
+    d.sh_result = Math.round(+d.MNLEGPERC2014 * 20) / 20;
+    // round to nearest 10
+    d.gov_rslt = Math.floor(+d.MNGOVPERC2014 / 10) * 10;
+
+    d.party = d.Party;
+    d.year_elected = +yearFormat(d.YearElected);
+    d.incumbency = d.Pickup;
+    d.open_seat = d.OpenSeat;
+  });
+
+  // set crossfilter
+  var ndx = crossfilter(data);
+
+  // create dimensions (x-axis values)
+  var year_electedDim  = ndx.dimension(function(d) {return d.year_elected;}),
+      // dc.pluck: short-hand for same kind of anon. function we used for yearDim
+      partyDim  = ndx.dimension(dc.pluck('party')),
+      incumbencyDim = ndx.dimension(dc.pluck('incumbency')),
+      dpiDim = ndx.dimension(dc.pluck('dpi')),
+      dembaseDim = ndx.dimension(function(d) {return d.dembaseDim;}),
+      sh_resultDim = ndx.dimension(function(d) {return d.sh_result;}),
+      gov_rsltDim = ndx.dimension(function(d) {return d.gov_rslt;}),
+      allDimDim = ndx.dimension(function(d) {return d;});
+
+  // create groups (y-axis values)
+  var all = ndx.groupAll();
+  var countPerYear = year_electedDim.group().reduceCount(),
+      countPerParty = partyDim.group().reduceCount(),
+      countPerIncumbent = incumbencyDim.group().reduceCount(),
+      countPerDPI = dpiDim.group().reduceCount(),
+      countPerDemBase = dembaseDim.group().reduceCount(),
+      countPerShResult = sh_resultDim.group().reduceCount(),
+      countPerGovResult = gov_rsltDim.group().reduceCount();
+
+  // specify charts
+  var yearChart   = dc.pieChart('#chart-ring-year'),
+      partyChart   = dc.pieChart('#chart-ring-party'),
+      incumbentChart   = dc.pieChart('#chart-ring-incumb'),
+      dpiCountChart  = dc.barChart('#chart-dpi-count'),
+      demBaseCountChart  = dc.barChart('#chart-dem-base-count'),
+      shResultCountChart  = dc.barChart('#chart-shresult-count'),
+      govResultCountChart  = dc.barChart('#chart-govresult-count'),
+      dataCount = dc.dataCount('#data-count')
+      dataTable = dc.dataTable('#data-table');
+
+  yearChart
+      .width(150)
+      .height(150)
+      .dimension(year_electedDim)
+      .group(countPerYear)
+      .innerRadius(20);
+
+  partyChart
+      .width(150)
+      .height(150)
+      .dimension(partyDim)
+      .group(countPerParty)
+      .innerRadius(20);
+
+  incumbentChart
+      .width(150)
+      .height(150)
+      .dimension(incumbencyDim)
+      .group(countPerIncumbent)
+      .innerRadius(20);
+
+  dpiCountChart
+      .width(300)
+      .height(180)
+      .dimension(dpiDim)
+      .group(countPerDPI)
+      .x(d3.scale.linear().domain([0,100]))
+      .elasticY(true)
+      .centerBar(true)
+      .barPadding(5)
+      .xAxisLabel('DPI')
+      .yAxisLabel('Count')
+      .margins({top: 10, right: 20, bottom: 50, left: 50});
+
+
+  demBaseCountChart
+      .width(300)
+      .height(180)
+      .dimension(dembaseDim)
+      .group(countPerDemBase)
+      .x(d3.scale.linear().domain([0,100]))
+      .elasticY(true)
+      .centerBar(true)
+      .barPadding(5)
+      .xAxisLabel('Dem Base')
+      .yAxisLabel('Count')
+      .margins({top: 10, right: 20, bottom: 50, left: 50});
+
+  shResultCountChart
+      .width(300)
+      .height(180)
+      .dimension(sh_resultDim)
+      .group(countPerShResult)
+      .x(d3.scale.linear().domain([0,100]))
+      .elasticY(true)
+      .centerBar(true)
+      .barPadding(2)
+      .xAxisLabel('Alcohol By Volume (%)')
+      .yAxisLabel('Count')
+      .margins({top: 10, right: 20, bottom: 50, left: 50});
+
+  govResultCountChart
+      .width(300)
+      .height(180)
+      .dimension(gov_rsltDim)
+      .group(countPerGovResult)
+      .x(d3.scale.linear().domain([-2, d3.max(beerData, function (d) { return d.beer.beer_ibu; }) + 2]))
+      .elasticY(true)
+      .centerBar(true)
+      .barPadding(5)
+      .xAxisLabel('International Bitterness Units')
+      .yAxisLabel('Count')
+      .
+      .margins({top: 10, right: 20, bottom: 50, left: 50});
+
+  dataCount
+      .dimension(ndx)
+      .group(all);
+
+   dataTable
+    .dimension(allDim)
+    .group(function (d) { return 'dc.js insists on putting a row here so I remove it using JS'; })
+    .size(100)
+    .columns([
+      function (d) { return d.District; },
+      function (d) { return d.Name; },
+      function (d) { return d.Party; },
+      function (d) { return d.DPI; },
+      function (d) { return d.DemBase; },
+      function (d) { return d.MNLEGPERC2014; },
+      function (d) { return d.Pickup; }
+    ])
+    .sortBy(dc.pluck('District'))
+    .order(d3.descending)
+    .on('renderlet', function (table) {
+      // each time table is rendered remove nasty extra row dc.js insists on adding
+      table.select('tr.dc-table-group').remove();
+
+      // update map with breweries to match filtered data
+     # breweryMarkers.clearLayers();
+     # _.each(allDim.top(Infinity), function (d) {
+     #   var loc = d.brewery.location;
+     #   var name = d.brewery.brewery_name;
+     #   var marker = L.marker([loc.lat, loc.lng]);
+      #  marker.bindPopup("<p>" + name + " " + loc.brewery_city + " " + loc.brewery_state + "</p>");
+     #   breweryMarkers.addLayer(marker);
+    #  });
+    #  map.addLayer(breweryMarkers);
+     # map.fitBounds(breweryMarkers.getBounds());
+    #});
+
+  // register handlers
+  d3.selectAll('a#all').on('click', function () {
+    dc.filterAll();
+    dc.renderAll();
+  });
+
+  d3.selectAll('a#year').on('click', function () {
+    yearChart.filterAll();
+    dc.redrawAll();
+  });
+
+  d3.selectAll('a#party').on('click', function () {
+    partyChart.filterAll();
+    dc.redrawAll();
+  });
+
+  d3.selectAll('a#incumb').on('click', function () {
+    incumbentChart.filterAll();
+    dc.redrawAll();
+  });
+
+  // showtime!
+  dc.renderAll();
+
+});
+
+</script>
+</body></html>
